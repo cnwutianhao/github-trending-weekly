@@ -1,0 +1,39 @@
+name: Weekly GitHub Trending
+
+on:
+  schedule:
+    # 北京时间每周一 00:00 (UTC 周日 16:00)
+    - cron: "0 16 * * 0"
+  workflow_dispatch:   # 支持手动触发
+
+jobs:
+  fetch-and-report:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Fetch trending
+        run: python3 fetch_trending.py
+
+      - name: Commit and push weekly report
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # 如果有新的周报文件或变更则提交
+          git add weekly/
+          if git diff --cached --quiet; then
+            echo "No changes, skipping commit."
+          else
+            git commit -m "📊 add weekly trending report $(date +%Y%m%d)"
+            git push
+          fi
