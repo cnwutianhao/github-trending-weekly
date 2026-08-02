@@ -2,6 +2,14 @@
 
 每周自动抓取 GitHub 热门趋势仓库，生成中文 Markdown 周报。
 
+## 最新周报
+
+<!-- LATEST_REPORT_START -->
+- [2026年07月27日—2026年08月02日](weekly/20260727-20260802.md)
+<!-- LATEST_REPORT_END -->
+
+所有历史报告请查看 [`weekly/`](weekly/) 目录。
+
 ## 使用方式
 
 ### 手动运行

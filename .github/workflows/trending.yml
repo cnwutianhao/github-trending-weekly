@@ -33,7 +33,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           # 如果有新的周报文件或变更则提交
-          git add weekly/
+          git add weekly/ README.md
           if git diff --cached --quiet; then
             echo "No changes, skipping commit."
           else

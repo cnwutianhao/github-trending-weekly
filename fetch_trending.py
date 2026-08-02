@@ -9,13 +9,19 @@
 import os
 import re
 import sys
+import tempfile
 import urllib.request
 from datetime import date, timedelta
 from html.parser import HTMLParser
+from pathlib import Path
 
 
 TRENDING_URL = "https://github.com/trending?since=weekly"
-OUTPUT_DIR = "weekly"
+BASE_DIR = Path(__file__).resolve().parent
+OUTPUT_DIR = BASE_DIR / "weekly"
+README_PATH = BASE_DIR / "README.md"
+LATEST_REPORT_START = "<!-- LATEST_REPORT_START -->"
+LATEST_REPORT_END = "<!-- LATEST_REPORT_END -->"
 
 
 def first_day_of_this_week() -> date:
@@ -182,6 +188,51 @@ def generate_report(repos: list[dict], monday: date, sunday: date) -> str:
     return "\n".join(lines) + "\n"
 
 
+def update_latest_report(readme: str, monday: date, sunday: date, report_path: str) -> str:
+    """更新 README 中的最新周报链接，保留标记之外的内容。"""
+    if readme.count(LATEST_REPORT_START) != 1 or readme.count(LATEST_REPORT_END) != 1:
+        raise ValueError("README 必须包含唯一的 LATEST_REPORT_START 和 LATEST_REPORT_END 标记")
+
+    start = readme.index(LATEST_REPORT_START) + len(LATEST_REPORT_START)
+    end = readme.index(LATEST_REPORT_END)
+    if start > end:
+        raise ValueError("README 中的 LATEST_REPORT 标记顺序不正确")
+
+    label = f"{monday.strftime('%Y年%m月%d日')}—{sunday.strftime('%Y年%m月%d日')}"
+    latest = f"\n- [{label}]({report_path})\n"
+    return readme[:start] + latest + readme[end:]
+
+
+def atomic_write(path: Path, content: str) -> None:
+    """通过同目录临时文件原子替换文本文件。"""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as f:
+            f.write(content)
+            temp_path = Path(f.name)
+        os.replace(temp_path, path)
+    finally:
+        if temp_path and temp_path.exists():
+            temp_path.unlink()
+
+
+def publish_report(filepath: Path, report: str, readme_path: Path, updated_readme: str) -> None:
+    """发布周报和 README；README 更新失败时回滚周报。"""
+    filepath = Path(filepath)
+    previous_report = filepath.read_text(encoding="utf-8") if filepath.exists() else None
+    atomic_write(filepath, report)
+    try:
+        atomic_write(Path(readme_path), updated_readme)
+    except Exception:
+        if previous_report is None:
+            filepath.unlink(missing_ok=True)
+        else:
+            atomic_write(filepath, previous_report)
+        raise
+
+
 def main():
     if len(sys.argv) > 1:
         filepath = sys.argv[1]
@@ -199,17 +250,21 @@ def main():
     if len(repos) == 0:
         raise RuntimeError("未解析到任何仓库；GitHub 页面结构可能已变化，拒绝生成空周报")
 
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
     monday = first_day_of_this_week()
     sunday = sunday_from_monday(monday)
     report = generate_report(repos, monday, sunday)
 
     filename = f"{monday.strftime('%Y%m%d')}-{sunday.strftime('%Y%m%d')}.md"
-    filepath = os.path.join(OUTPUT_DIR, filename)
-    with open(filepath, "w", encoding="utf-8") as f:
-        f.write(report)
+    filepath = Path(OUTPUT_DIR) / filename
+    with open(README_PATH, "r", encoding="utf-8") as f:
+        readme = f.read()
+    report_path = (Path("weekly") / filename).as_posix()
+    updated_readme = update_latest_report(readme, monday, sunday, report_path)
+
+    publish_report(filepath, report, Path(README_PATH), updated_readme)
 
     print(f"✅ Report saved to {filepath}")
+    print(f"✅ Latest report link updated in {README_PATH}")
 
     sorted_repos = sorted(repos, key=lambda r: int(r["stars_week"]), reverse=True)
     print(f"\n--- Top 5 ({len(repos)} repos total) ---")

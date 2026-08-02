@@ -52,6 +52,55 @@ class GenerateReportTests(unittest.TestCase):
         self.assertTrue(report.endswith("*\n"))
 
 
+class UpdateReadmeTests(unittest.TestCase):
+    def test_replaces_only_latest_report_section(self):
+        readme = """# Project
+
+## 最新周报
+
+<!-- LATEST_REPORT_START -->
+旧内容
+<!-- LATEST_REPORT_END -->
+
+保留内容
+"""
+        updated = fetch_trending.update_latest_report(
+            readme, date(2026, 7, 27), date(2026, 8, 2), "weekly/20260727-20260802.md"
+        )
+
+        self.assertIn(
+            "[2026年07月27日—2026年08月02日](weekly/20260727-20260802.md)", updated
+        )
+        self.assertNotIn("旧内容", updated)
+        self.assertIn("保留内容", updated)
+
+    def test_raises_when_markers_are_missing(self):
+        with self.assertRaisesRegex(ValueError, "LATEST_REPORT"):
+            fetch_trending.update_latest_report(
+                "# Project\n", date(2026, 7, 27), date(2026, 8, 2), "weekly/report.md"
+            )
+
+
+    def test_rolls_back_report_when_readme_write_fails(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            report_path = Path(temp_dir) / "weekly" / "report.md"
+            readme_path = Path(temp_dir) / "README.md"
+            readme_path.write_text("old readme", encoding="utf-8")
+            real_atomic_write = fetch_trending.atomic_write
+
+            def fail_readme(path, content):
+                if Path(path) == readme_path:
+                    raise OSError("write failed")
+                real_atomic_write(path, content)
+
+            with patch.object(fetch_trending, "atomic_write", side_effect=fail_readme):
+                with self.assertRaisesRegex(OSError, "write failed"):
+                    fetch_trending.publish_report(report_path, "new report", readme_path, "new readme")
+
+            self.assertFalse(report_path.exists())
+            self.assertEqual("old readme", readme_path.read_text(encoding="utf-8"))
+
+
 class MainTests(unittest.TestCase):
     def test_does_not_write_empty_report_when_parsing_fails(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -59,7 +108,7 @@ class MainTests(unittest.TestCase):
             source.write_text("<html></html>", encoding="utf-8")
             output_dir = Path(temp_dir) / "weekly"
             with patch.object(fetch_trending.sys, "argv", ["fetch_trending.py", str(source)]), patch.object(
-                fetch_trending, "OUTPUT_DIR", str(output_dir)
+                fetch_trending, "OUTPUT_DIR", output_dir
             ):
                 with self.assertRaisesRegex(RuntimeError, "未解析到任何仓库"):
                     fetch_trending.main()
