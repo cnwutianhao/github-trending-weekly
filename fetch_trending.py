@@ -46,6 +46,14 @@ def parse_repos(html_str: str) -> list[dict]:
 
     # 每个仓库由 <article class="Box-row"> 包裹
     blocks = re.split(r'<article\s+class="Box-row"', html_str)[1:]
+
+    if not blocks:
+        # GitHub 可能在 HTML 里用了不同的 class — 往下看看具体结构
+        # 新版 GitHub Trending 可能用 <article class="Box-row d-flex"> 或其他变体
+        blocks = re.split(r'<article\b[^>]*>', html_str)[1:]
+        # 过滤掉不是仓库卡片的 article
+        blocks = [b for b in blocks if '/stargazers' in b]
+
     for block in blocks:
         article_end = block.find("</article>")
         if article_end != -1:
@@ -166,6 +174,24 @@ def main():
     print("Parsing repositories...")
     repos = parse_repos(html_str)
     print(f"Found {len(repos)} repositories")
+
+    # 调试：如果没解析到任何仓库，保存 HTML 片段以便排查
+    if len(repos) == 0:
+        import time
+        debug_path = os.path.join(OUTPUT_DIR, f"debug_{time.strftime('%Y%m%d_%H%M%S')}.html")
+        with open(debug_path, "w", encoding="utf-8") as f:
+            # 只保留中间部分 (去掉头部导航/底部)
+            body = html_str
+            m = re.search(r'<article\b', body)
+            if m:
+                body = body[m.start():]
+            # 最多 50KB
+            f.write(body[:50000])
+        print(f"⚠️ No repos parsed, debug HTML saved to {debug_path}")
+        # 也打印 HTML 前 2000 字符以便在 Actions 日志里直接看
+        print("--- HTML preview (first 2000 chars) ---")
+        print(html_str[:2000])
+        print("--- end preview ---")
 
     monday = first_day_of_this_week()
     sunday = sunday_from_monday(monday)
