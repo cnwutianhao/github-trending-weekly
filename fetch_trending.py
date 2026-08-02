@@ -48,10 +48,8 @@ def parse_repos(html_str: str) -> list[dict]:
     blocks = re.split(r'<article\s+class="Box-row"', html_str)[1:]
 
     if not blocks:
-        # GitHub 可能在 HTML 里用了不同的 class — 往下看看具体结构
-        # 新版 GitHub Trending 可能用 <article class="Box-row d-flex"> 或其他变体
+        # GitHub 可能改了 HTML class，用泛型 <article> 兜底
         blocks = re.split(r'<article\b[^>]*>', html_str)[1:]
-        # 过滤掉不是仓库卡片的 article
         blocks = [b for b in blocks if '/stargazers' in b]
 
     for block in blocks:
@@ -141,7 +139,7 @@ def generate_report(repos: list[dict], monday: date, sunday: date) -> str:
         stars = format_number(r["total_stars"])
         week = format_number(r["stars_week"])
         desc = r["description"][:100] + ("..." if len(r["description"]) > 100 else "")
-        desc = desc.replace("|", "\\|")  # 防止破坏表格
+        desc = desc.replace("|", "\\|")
         lines.append(f"| {i} | {name} | {lang} | {stars} | +{week} | {desc} |")
 
     lines.append("")
@@ -162,7 +160,6 @@ def generate_report(repos: list[dict], monday: date, sunday: date) -> str:
 
 def main():
     if len(sys.argv) > 1:
-        # 从本地 HTML 文件读取（测试用）
         filepath = sys.argv[1]
         print(f"Reading HTML from {filepath}...")
         with open(filepath, "r", encoding="utf-8") as f:
@@ -171,45 +168,30 @@ def main():
         print("Fetching GitHub Trending (weekly)...")
         html_str = fetch_html(TRENDING_URL)
 
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
     print("Parsing repositories...")
     repos = parse_repos(html_str)
     print(f"Found {len(repos)} repositories")
 
-    # 调试：如果没解析到任何仓库，保存 HTML 片段以便排查
     if len(repos) == 0:
-        import time
-        debug_path = os.path.join(OUTPUT_DIR, f"debug_{time.strftime('%Y%m%d_%H%M%S')}.html")
-        with open(debug_path, "w", encoding="utf-8") as f:
-            # 只保留中间部分 (去掉头部导航/底部)
-            body = html_str
-            m = re.search(r'<article\b', body)
-            if m:
-                body = body[m.start():]
-            # 最多 50KB
-            f.write(body[:50000])
-        print(f"⚠️ No repos parsed, debug HTML saved to {debug_path}")
-        # 也打印 HTML 前 2000 字符以便在 Actions 日志里直接看
-        print("--- HTML preview (first 2000 chars) ---")
-        print(html_str[:2000])
+        print("--- HTML preview (first 3000 chars) ---")
+        print(html_str[:3000])
         print("--- end preview ---")
 
     monday = first_day_of_this_week()
     sunday = sunday_from_monday(monday)
     report = generate_report(repos, monday, sunday)
 
-    # 文件名: 20260727-20260802.md
     filename = f"{monday.strftime('%Y%m%d')}-{sunday.strftime('%Y%m%d')}.md"
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
     filepath = os.path.join(OUTPUT_DIR, filename)
     with open(filepath, "w", encoding="utf-8") as f:
         f.write(report)
 
     print(f"✅ Report saved to {filepath}")
-    print(f"   Repos: {len(repos)}")
 
-    # 前 5
     sorted_repos = sorted(repos, key=lambda r: int(r["stars_week"]), reverse=True)
-    print("\n--- Top 5 ---")
+    print(f"\n--- Top 5 ({len(repos)} repos total) ---")
     for i, r in enumerate(sorted_repos[:5], 1):
         print(f"  {i}. {r['full_name']} (+{r['stars_week']} stars) — {r['description'][:60]}")
 
