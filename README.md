@@ -29,10 +29,17 @@ python3 fetch_trending.py test_trending.html
 ```
 .
 ├── fetch_trending.py          # 抓取+解析脚本（纯标准库，零依赖）
+├── test_fetch_trending.py     # 单元测试
 ├── .github/workflows/
 │   └── trending.yml           # GitHub Actions 定时任务
 └── weekly/
     └── 20260727-20260802.md   # 周报
+```
+
+## 测试
+
+```bash
+python3 -m unittest -v
 ```
 
 ## 报告内容

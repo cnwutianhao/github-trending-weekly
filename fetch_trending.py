@@ -6,12 +6,12 @@
      python3 fetch_trending.py FILE.html   # 从本地 HTML 文件解析
 """
 
-import html
 import os
 import re
 import sys
 import urllib.request
 from datetime import date, timedelta
+from html.parser import HTMLParser
 
 
 TRENDING_URL = "https://github.com/trending?since=weekly"
@@ -40,71 +40,95 @@ def fetch_html(url: str) -> str:
         return resp.read().decode("utf-8")
 
 
+class TrendingParser(HTMLParser):
+    """用容错的标准库 HTML 解析器读取 Trending 仓库卡片。"""
+
+    VOID_ELEMENTS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.repos = []
+        self.repo = None
+        self.article_depth = 0
+        self.capture = None
+        self.capture_depth = 0
+        self.text = []
+
+    @staticmethod
+    def _classes(attrs):
+        return set(dict(attrs).get("class", "").split())
+
+    def handle_starttag(self, tag, attrs):
+        attrs_dict = dict(attrs)
+        if tag == "article":
+            self.article_depth += 1
+            if self.article_depth == 1:
+                self.repo = {"description": "", "language": "", "total_stars": "0", "stars_week": "0", "forks": "0"}
+            return
+        if not self.repo:
+            return
+
+        if self.capture and tag not in self.VOID_ELEMENTS:
+            self.capture_depth += 1
+
+        href = attrs_dict.get("href", "")
+        if tag == "a" and not self.repo.get("full_name"):
+            match = re.fullmatch(r"/([^/]+/[^/]+)", href)
+            if match:
+                full_name = match.group(1)
+                owner, name = full_name.split("/", 1)
+                self.repo.update(full_name=full_name, owner=owner, name=name)
+
+        classes = self._classes(attrs)
+        if tag == "p" and "color-fg-muted" in classes:
+            self._start_capture("description")
+        elif tag == "span" and attrs_dict.get("itemprop") == "programmingLanguage":
+            self._start_capture("language")
+        elif tag == "a" and href.endswith("/stargazers"):
+            self._start_capture("total_stars")
+        elif tag == "a" and href.endswith("/forks"):
+            self._start_capture("forks")
+        elif tag == "span" and {"float-sm-right", "d-inline-block"}.issubset(classes):
+            self._start_capture("stars_week")
+
+    def _start_capture(self, field):
+        self.capture = field
+        self.capture_depth = 1
+        self.text = []
+
+    def handle_data(self, data):
+        if self.capture:
+            self.text.append(data)
+
+    def handle_endtag(self, tag):
+        if self.capture and tag in self.VOID_ELEMENTS:
+            return
+        if self.capture:
+            self.capture_depth -= 1
+            if self.capture_depth == 0:
+                value = " ".join("".join(self.text).split())
+                if self.capture in {"total_stars", "forks", "stars_week"}:
+                    match = re.search(r"[\d,]+", value)
+                    value = match.group(0).replace(",", "") if match else "0"
+                self.repo[self.capture] = value
+                self.capture = None
+                self.text = []
+
+        if tag == "article" and self.article_depth:
+            self.article_depth -= 1
+            if self.article_depth == 0:
+                if self.repo.get("full_name"):
+                    self.repo["built_by"] = []
+                    self.repos.append(self.repo)
+                self.repo = None
+
+
 def parse_repos(html_str: str) -> list[dict]:
     """解析 GitHub Trending 页面，返回仓库列表。"""
-    repos = []
-
-    # 每个仓库由 <article class="Box-row"> 包裹
-    blocks = re.split(r'<article\s+class="Box-row"', html_str)[1:]
-
-    if not blocks:
-        # GitHub 可能改了 HTML class，用泛型 <article> 兜底
-        blocks = re.split(r'<article\b[^>]*>', html_str)[1:]
-        blocks = [b for b in blocks if '/stargazers' in b]
-
-    for block in blocks:
-        article_end = block.find("</article>")
-        if article_end != -1:
-            block = block[:article_end]
-
-        repo = {}
-
-        # --- 仓库名: h2 > a ---
-        h2_m = re.search(r'<h2[^>]*>\s*<a\s+href="/([^"]+)"', block)
-        if not h2_m:
-            continue
-        full_name = h2_m.group(1)
-        repo["full_name"] = full_name
-        parts = full_name.split("/")
-        repo["owner"] = parts[0]
-        repo["name"] = parts[1]
-
-        # --- 描述: <p class="col-9 ..."> ---
-        desc_m = re.search(r'<p\s+class="col-9\s+color-fg-muted[^"]*"\s*>(.*?)</p>', block, re.DOTALL)
-        if desc_m:
-            desc = re.sub(r'<[^>]+>', '', desc_m.group(1)).strip()
-            desc = html.unescape(desc).replace("\n", " ").replace("  ", " ")
-            repo["description"] = desc.strip()
-        else:
-            repo["description"] = ""
-
-        # --- 语言 ---
-        lang_m = re.search(r'<span\s+itemprop="programmingLanguage">\s*([^<]+)\s*</span>', block)
-        repo["language"] = lang_m.group(1).strip() if lang_m else ""
-
-        # --- 总 star 数 ---
-        star_m = re.search(r'href="/[^"]+/stargazers"[^>]*>\s*([\d,]+)\s*</a>', block)
-        repo["total_stars"] = star_m.group(1).replace(",", "") if star_m else "0"
-
-        # --- 本周 star 数 ---
-        week_m = re.search(
-            r'<span\s+class="d-inline-block\s+float-sm-right"[^>]*>\s*([\d,]+)\s+stars?\s+this\s+week',
-            block,
-            re.IGNORECASE,
-        )
-        repo["stars_week"] = week_m.group(1).replace(",", "") if week_m else "0"
-
-        # --- forks 数 ---
-        fork_m = re.search(r'href="/[^"]+/forks"[^>]*>\s*([\d,]+)\s*</a>', block)
-        repo["forks"] = fork_m.group(1).replace(",", "") if fork_m else "0"
-
-        # --- built by ---
-        built_by = re.findall(r'href="/([^"]+)"[^>]*>\s*<img[^>]*rounded-2[^>]*>', block)
-        repo["built_by"] = [u for u in built_by if "/" not in u or u.startswith("apps/")]
-
-        repos.append(repo)
-
-    return repos
+    parser = TrendingParser()
+    parser.feed(html_str)
+    parser.close()
+    return parser.repos
 
 
 def format_number(n: str) -> str:
@@ -155,7 +179,7 @@ def generate_report(repos: list[dict], monday: date, sunday: date) -> str:
     lines.append("")
     lines.append(f"*自动生成于 {date.today().isoformat()} | [GitHub Trending Weekly](https://github.com/trending?since=weekly)*")
 
-    return "\n".join(lines)
+    return "\n".join(lines) + "\n"
 
 
 def main():
@@ -168,17 +192,14 @@ def main():
         print("Fetching GitHub Trending (weekly)...")
         html_str = fetch_html(TRENDING_URL)
 
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-
     print("Parsing repositories...")
     repos = parse_repos(html_str)
     print(f"Found {len(repos)} repositories")
 
     if len(repos) == 0:
-        print("--- HTML preview (first 3000 chars) ---")
-        print(html_str[:3000])
-        print("--- end preview ---")
+        raise RuntimeError("未解析到任何仓库；GitHub 页面结构可能已变化，拒绝生成空周报")
 
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
     monday = first_day_of_this_week()
     sunday = sunday_from_monday(monday)
     report = generate_report(repos, monday, sunday)

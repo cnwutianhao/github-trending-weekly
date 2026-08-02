@@ -21,6 +21,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Test
+        run: python3 -m unittest -v
+
       - name: Fetch trending
         run: python3 fetch_trending.py
 
