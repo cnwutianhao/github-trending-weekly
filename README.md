@@ -8,7 +8,7 @@
 - [2026年08月03日—2026年08月09日](weekly/20260803-20260809.md)
 <!-- LATEST_REPORT_END -->
 
-所有历史报告请查看 [`weekly/`](weekly/) 目录。
+所有历史报告请查看 [`weekly/`](weekly/) 目录；每份周报对应的解释/归纳/趋势分析请查看 [`analysis/`](analysis/) 目录（与周报同名，由 AI 解读生成）。
 
 ## 使用方式
 
@@ -40,8 +40,10 @@ python3 fetch_trending.py test_trending.html
 ├── test_fetch_trending.py     # 单元测试
 ├── .github/workflows/
 │   └── trending.yml           # GitHub Actions 定时任务
-└── weekly/
-    └── 20260727-20260802.md   # 周报
+├── weekly/
+│   └── YYYYMMDD-YYYYMMDD.md      # 周报（自动生成），每期一份
+└── analysis/
+    └── YYYYMMDD-YYYYMMDD.md      # 周报解读与趋势分析（与 weekly 同名，AI 生成）
 ```
 
 ## 测试
